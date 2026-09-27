@@ -133,7 +133,28 @@ class Evasor(Node):
              calibrados como pensás, antes de que el error se note como un
              giro raro del robot.
         """
-        pass
+        scan = self.ultimo_scan
+        if scan is None:
+            return False
+
+        rangos = np.array(scan.ranges)
+        # Ángulo de cada medición: angle_min + i * angle_increment.
+        angulos = scan.angle_min + np.arange(len(rangos)) * scan.angle_increment
+
+        # Diferencia con el centro del cono, normalizada a [-pi, pi]
+        # (versión vectorizada de self.normalizar_angulo).
+        centro = math.radians(self.angulo_frente_deg)
+        diferencia = np.arctan2(np.sin(angulos - centro), np.cos(angulos - centro))
+
+        dentro_cono = np.abs(diferencia) <= math.radians(self.angulo_vision_deg / 2.0)
+        # Las comparaciones con inf/nan dan False, así que las mediciones sin
+        # retorno quedan afuera solas. Lo que está por debajo de range_min es
+        # ruido del sensor, no un obstáculo.
+        mas_cerca = (rangos >= scan.range_min) & (rangos < self.distancia_choque_m)
+
+        mascara = dentro_cono & mas_cerca
+        self.publicar_scan_filtrado(mascara)
+        return bool(np.any(mascara))
 
     def iniciar_giro(self):
         """Guarda el yaw actual como referencia para saber, más adelante,
@@ -146,17 +167,17 @@ class Evasor(Node):
         return abs(self.normalizar_angulo(self.yaw_actual - self.yaw_inicial_giro))
 
     def avanzar(self) -> Twist:
-        """TODO: devolver un Twist que mueva el robot derecho hacia
+        """devolver un Twist que mueva el robot derecho hacia
         adelante, a velocidad_adelante (m/s)."""
         msg = Twist()
-        # TODO: completar el campo de avance
+        msg.linear.x = self.velocidad_adelante
         return msg
 
     def girar(self) -> Twist:
-        """TODO: igual que avanzar(), pero para girar en el lugar,
+        """igual que avanzar(), pero para girar en el lugar,
         a velocidad_angular (rad/s)."""
         msg = Twist()
-        # TODO: completar el campo de giro
+        msg.angular.z = self.velocidad_angular
         return msg
 
     def maquina_de_estados(self):
@@ -179,12 +200,24 @@ class Evasor(Node):
         el robot en cada momento.
         """
 
+        # Sin odometría no hay forma de medir cuánto se giró, así que no se
+        # arranca hasta que llegue el primer /odom.
+        if self.yaw_actual is None:
+            return
+
         # Transición de estados
 
         if self.estado == ESTADO_AVANZAR:
-            pass
+            if self.hay_obstaculo():
+                self.iniciar_giro()
+                self.estado = ESTADO_GIRAR
+                self.get_logger().info('AVANZAR -> GIRAR (obstáculo adelante)')
         if self.estado == ESTADO_GIRAR:
-            pass
+            if self.angulo_girado() >= math.radians(self.angulo_giro_deg):
+                self.estado = ESTADO_AVANZAR
+                self.get_logger().info(
+                    f'GIRAR -> AVANZAR (giró {math.degrees(self.angulo_girado()):.0f}°)'
+                )
 
         
         # Acción según el estado

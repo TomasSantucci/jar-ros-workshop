@@ -19,17 +19,7 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            # TODO: registrar acá el ejecutable "evasor" para que
-            # `ros2 run evasion_obstaculos evasor` lo encuentre. El formato es
-            # 'nombre_del_ejecutable = paquete.modulo:funcion' — el paquete es
-            # evasion_obstaculos, el módulo es evasor (evasor.py), y la función
-            # es main() (la que llama rclpy.init() / rclpy.spin()).
-            #
-            # Es esta linea de abajo — descomentala (borrá el # de adelante). En este
-            # workshop te la damos como ayuda, pero cuando armes un nodo
-            # propio de cero la vas a tener que escribir a mano vos:
-            
-            # 'evasor = evasion_obstaculos.evasor:main',
+            'evasor = evasion_obstaculos.evasor:main',
         ],
     },
 )
