@@ -32,7 +32,6 @@
     tener que escribir vos mirando qué lanza tu código.
   -->
 
-  <!--
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
   <exec_depend>rviz2</exec_depend>
@@ -40,7 +39,6 @@
   <exec_depend>deteccion_color</exec_depend>
   <exec_depend>yahboom_rosmaster_bringup</exec_depend>
   <exec_depend>yahboom_rosmaster_gazebo</exec_depend>
-  -->
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>

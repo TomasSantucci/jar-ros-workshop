@@ -67,13 +67,17 @@ def generate_launch_description():
             LaunchConfiguration('saturacion_min'), value_type=float),
     }]
 
-    # TODO 3: el nodo `detector` del paquete `deteccion_color`, con
-    # parameters=parametros_color. Mirá cómo evasion.launch.py arma el Node
-    # del evasor — es exactamente la misma forma, solo cambian package,
-    # executable, name y la lista de parámetros.
+    # El nodo `detector` de la semana 04: el mismo patrón que el evasor en
+    # evasion.launch.py, con los parámetros de color compartidos.
+    detector = Node(
+        package='deteccion_color',
+        executable='detector',
+        name='detector',
+        output='screen',
+        parameters=parametros_color,
+    )
 
-    # TODO 4: el nodo `detector_scan`, del mismo paquete, también con
-    # parameters=parametros_color.
+    # El nodo `detector_scan`, del mismo paquete y con los mismos parámetros.
     #
     # Ojo con este: detector_scan busca la transformada entre el lidar y la
     # cámara en tf2, y esa búsqueda se hace por timestamp. Si el nodo corre con
@@ -81,17 +85,30 @@ def generate_launch_description():
     # la simulación, los tiempos no coinciden y la transformada nunca aparece
     # ("lookup would require extrapolation into the past"). El use_sim_time que
     # ya viene en parametros_color es justamente lo que evita eso.
+    detector_scan = Node(
+        package='deteccion_color',
+        executable='detector_scan',
+        name='detector_scan',
+        output='screen',
+        parameters=parametros_color,
+    )
 
-    # TODO 5: RViz, con arguments=['-d', config_rviz] y use_sim_time en True.
-    # Es el mismo Node de rviz2 que ya viene resuelto en evasion.launch.py —
-    # cambiá solo qué config_rviz le pasás.
+    # RViz: el mismo Node de rviz2 que en evasion.launch.py, solo cambia la
+    # config que se le pasa.
+    rviz = Node(
+        package='rviz2',
+        executable='rviz2',
+        name='rviz2',
+        output='screen',
+        arguments=['-d', config_rviz],
+        parameters=[{'use_sim_time': True}],
+    )
 
-    # TODO 6: sumá acá los tres nodos de los TODO 3, 4 y 5. Mientras estén
-    # afuera de esta lista, el launch los ignora por completo aunque las
-    # variables estén perfectamente escritas arriba — mismo detalle que en
-    # evasion.launch.py.
     return LaunchDescription([
         declarar_world,
         declarar_saturacion,
         simulador,
+        detector,
+        detector_scan,
+        rviz,
     ])
