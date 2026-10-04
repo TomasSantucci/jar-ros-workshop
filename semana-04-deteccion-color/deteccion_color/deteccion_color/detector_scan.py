@@ -66,7 +66,26 @@ def puntos_laser_a_pixeles(rangos, angulos, rotacion, traslacion, fx, fy, cx, cy
          por eso.
       6. Devolver (u, v, adelante).
     """
-    pass
+    # Los rayos sin retorno (inf) generan NaN en las cuentas (inf * 0) y
+    # z_cam puede ser 0 o negativo. Esos puntos se descartan después (con
+    # "validos" y "adelante"), así que silenciamos los avisos de numpy.
+    with np.errstate(divide='ignore', invalid='ignore'):
+        x = rangos * np.cos(angulos)
+        y = rangos * np.sin(angulos)
+        z = np.zeros_like(rangos)
+        puntos_laser = np.stack((x, y, z), axis=1)
+
+        puntos_camara = puntos_laser @ rotacion.T + traslacion
+        x_cam = puntos_camara[:, 0]
+        y_cam = puntos_camara[:, 1]
+        z_cam = puntos_camara[:, 2]
+
+        adelante = z_cam > 0.01
+
+        u = fx * x_cam / z_cam + cx
+        v = fy * y_cam / z_cam + cy
+
+    return u, v, adelante
 
 
 class DetectorScanColor(Node):
@@ -120,6 +139,9 @@ class DetectorScanColor(Node):
         # TODO: arrancá por acá esta parte del workshop. Creá self.publisher_,
         # el publisher de LaserScan en el tópico 'scan_rojo' (mismo patrón que
         # create_subscription de arriba, pero con create_publisher).
+        # Reliable (QoS por defecto): le llega tanto a suscriptores reliable
+        # (RViz por defecto) como best effort.
+        self.publisher_ = self.create_publisher(LaserScan, 'scan_rojo', 10)
 
     def recibir_imagen(self, msg: Image):
         self.ultima_imagen = self.puente.imgmsg_to_cv2(msg, desired_encoding='bgr8')
@@ -193,7 +215,66 @@ class DetectorScanColor(Node):
               rangos_filtrados.tolist() como ranges. Publicarlo en
               self.publisher_.
         """
-        pass
+        if self.ultima_imagen is None or self.info_camara is None:
+            return
+
+        transform = self.obtener_transform_laser_a_camara(msg.header.frame_id)
+        if transform is None:
+            return
+
+        t = transform.transform.translation
+        q = transform.transform.rotation
+        traslacion = np.array([t.x, t.y, t.z])
+        rotacion = cuaternion_a_rotacion(q.x, q.y, q.z, q.w)
+
+        rangos = np.array(msg.ranges)
+        n = len(rangos)
+        angulos = msg.angle_min + np.arange(n) * msg.angle_increment
+
+        with np.errstate(invalid='ignore'):
+            validos = (np.isfinite(rangos)
+                       & (rangos >= msg.range_min) & (rangos <= msg.range_max))
+
+        u, v, adelante = puntos_laser_a_pixeles(
+            rangos, angulos, rotacion, traslacion,
+            self.info_camara['fx'], self.info_camara['fy'],
+            self.info_camara['cx'], self.info_camara['cy'],
+        )
+
+        ancho = self.info_camara['width']
+        alto = self.info_camara['height']
+        with np.errstate(invalid='ignore'):
+            dentro_de_imagen = (adelante
+                                & (u >= 0) & (u < ancho)
+                                & (v >= 0) & (v < alto))
+
+        imagen_hsv = cv2.cvtColor(self.ultima_imagen, cv2.COLOR_BGR2HSV)
+        mascara = mascara_rojo(
+            imagen_hsv,
+            self.hue_rojo_bajo_1, self.hue_rojo_alto_1,
+            self.hue_rojo_bajo_2, self.hue_rojo_alto_2,
+            self.saturacion_min, self.valor_min,
+        )
+
+        es_rojo = np.zeros(n, dtype=bool)
+        indices = np.where(dentro_de_imagen)[0]
+        columnas = u[indices].astype(int)
+        filas = v[indices].astype(int)
+        es_rojo[indices] = mascara[filas, columnas] > 0
+
+        rangos_filtrados = np.where(validos & es_rojo, rangos, math.inf)
+
+        scan_rojo = LaserScan()
+        scan_rojo.header = msg.header
+        scan_rojo.angle_min = msg.angle_min
+        scan_rojo.angle_max = msg.angle_max
+        scan_rojo.angle_increment = msg.angle_increment
+        scan_rojo.time_increment = msg.time_increment
+        scan_rojo.scan_time = msg.scan_time
+        scan_rojo.range_min = msg.range_min
+        scan_rojo.range_max = msg.range_max
+        scan_rojo.ranges = rangos_filtrados.tolist()
+        self.publisher_.publish(scan_rojo)
 
 
 def main(args=None):

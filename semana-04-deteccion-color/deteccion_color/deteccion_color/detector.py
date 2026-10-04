@@ -42,6 +42,10 @@ class DetectorColor(Node):
         self.puente = CvBridge()
 
         self.publisher_ = self.create_publisher(Bool, 'rojo_detectado', 10)
+        # Tópicos de debug para ver qué está haciendo el detector, por ej. con
+        # `ros2 run rqt_image_view rqt_image_view`.
+        self.pub_mascara = self.create_publisher(Image, 'detector_color/mascara', 10)
+        self.pub_debug = self.create_publisher(Image, 'detector_color/debug', 10)
         # qos_profile_sensor_data: la cámara publica best effort, igual que el
         # lidar de la semana 03. Con el default reliable no llegaría ni un
         # frame, y sin ningún error.
@@ -86,7 +90,15 @@ class DetectorColor(Node):
           4. Combinar las dos máscaras con cv2.bitwise_or (un pixel es
              rojo si cae en cualquiera de los dos rangos).
         """
-        pass
+        bajo_1 = np.array([self.hue_rojo_bajo_1, self.saturacion_min, self.valor_min])
+        alto_1 = np.array([self.hue_rojo_alto_1, 255.0, 255.0])
+        bajo_2 = np.array([self.hue_rojo_bajo_2, self.saturacion_min, self.valor_min])
+        alto_2 = np.array([self.hue_rojo_alto_2, 255.0, 255.0])
+
+        mascara_1 = cv2.inRange(imagen_hsv, bajo_1, alto_1)
+        mascara_2 = cv2.inRange(imagen_hsv, bajo_2, alto_2)
+
+        return cv2.bitwise_or(mascara_1, mascara_2)
 
     def hay_cuadrado_rojo(self) -> bool:
         """
@@ -102,7 +114,17 @@ class DetectorColor(Node):
           4. Medir self.area_mayor_contorno(...) de esa máscara.
           5. Devolver True si esa área es mayor a self.area_minima_px.
         """
-        pass
+        if self.ultima_imagen is None:
+            return False
+
+        hsv_image = cv2.cvtColor(self.ultima_imagen, cv2.COLOR_BGR2HSV)
+
+        red_mask = self.mascara_rojo(hsv_image)
+
+        contour_area = self.area_mayor_contorno(red_mask)
+
+        return contour_area > self.area_minima_px
+
 
     def procesar_imagen(self):
         """
@@ -121,7 +143,50 @@ class DetectorColor(Node):
              ilegible. Guardá el último valor en self.ultimo_valor_publicado
              para poder compararlo la próxima vez.
         """
-        pass
+        detectado = self.hay_cuadrado_rojo()
+
+        if detectado:
+            msg = Bool()
+            msg.data = True
+            self.publisher_.publish(msg)
+
+        if detectado != self.ultimo_valor_publicado:
+            if detectado:
+                self.get_logger().info('Cuadrado rojo detectado')
+            else:
+                self.get_logger().info('Cuadrado rojo fuera de vista')
+            self.ultimo_valor_publicado = detectado
+
+        self.publicar_debug(detectado)
+
+    def publicar_debug(self, detectado: bool):
+        """Publica la máscara y la imagen original con los contornos rojos
+        dibujados. Solo trabaja si alguien está suscripto a esos tópicos."""
+        if self.ultima_imagen is None:
+            return
+        if (self.pub_mascara.get_subscription_count() == 0
+                and self.pub_debug.get_subscription_count() == 0):
+            return
+
+        mascara = self.mascara_rojo(
+            cv2.cvtColor(self.ultima_imagen, cv2.COLOR_BGR2HSV)
+        )
+        self.pub_mascara.publish(self.puente.cv2_to_imgmsg(mascara, encoding='mono8'))
+
+        debug = self.ultima_imagen.copy()
+        contornos, _ = cv2.findContours(
+            mascara, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+        )
+        for c in contornos:
+            # Verde: supera el área mínima. Amarillo: se descarta por ruido.
+            grande = cv2.contourArea(c) > self.area_minima_px
+            color = (0, 255, 0) if grande else (0, 255, 255)
+            cv2.drawContours(debug, [c], -1, color, 2)
+        area = self.area_mayor_contorno(mascara)
+        texto = f'{"ROJO" if detectado else "nada"}  area={area:.0f}'
+        cv2.putText(debug, texto, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8,
+                    (0, 255, 0) if detectado else (0, 0, 255), 2)
+        self.pub_debug.publish(self.puente.cv2_to_imgmsg(debug, encoding='bgr8'))
 
 
 def main(args=None):

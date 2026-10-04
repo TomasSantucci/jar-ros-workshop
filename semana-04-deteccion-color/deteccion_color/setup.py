@@ -19,11 +19,8 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            # TODO: registrar acá los ejecutables "detector" y "detector_scan"
-            # para que `ros2 run deteccion_color detector` / `detector_scan`
-            # los encuentren. El formato es
-            # 'nombre_del_ejecutable = paquete.modulo:funcion' 
-            # los ejecutables tienen que llamarse "detector" y "detector_scan"
+            'detector = deteccion_color.detector:main',
+            'detector_scan = deteccion_color.detector_scan:main',
         ],
     },
 )
