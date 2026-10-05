@@ -335,7 +335,36 @@ class Localizador(Node):
           5. Devolver un array nuevo con esas x', y', theta' (y el mismo
              peso que tenían, no se toca acá).
         """
-        pass
+        n = len(particulas)
+
+        # 1. Desplazamiento en el marco del robot al empezar el paso.
+        d_trans_x = dx * math.cos(theta0) + dy * math.sin(theta0)
+        d_trans_y = -dx * math.sin(theta0) + dy * math.cos(theta0)
+        d_rot = dtheta
+
+        # 2. Desvíos del ruido (las gammas son varianzas).
+        std_x = math.sqrt(self.gamma1 * d_trans_x ** 2 + self.gamma2 * d_trans_y ** 2
+                          + self.gamma3 * d_rot ** 2)
+        std_y = math.sqrt(self.gamma2 * d_trans_x ** 2 + self.gamma1 * d_trans_y ** 2
+                          + self.gamma3 * d_rot ** 2)
+        std_rot = math.sqrt(self.gamma4 * d_trans_x ** 2 + self.gamma5 * d_trans_y ** 2
+                            + self.gamma6 * d_rot ** 2)
+
+        # 3. Una muestra de ruido distinta por partícula.
+        d_trans_x_hat = d_trans_x - np.random.normal(0.0, std_x, n)
+        d_trans_y_hat = d_trans_y - np.random.normal(0.0, std_y, n)
+        d_rot_hat = d_rot - np.random.normal(0.0, std_rot, n)
+
+        # 4. Componer sobre la pose de cada partícula, con SU theta.
+        x, y, theta = particulas[:, 0], particulas[:, 1], particulas[:, 2]
+        cos_t, sin_t = np.cos(theta), np.sin(theta)
+        x_nuevo = x + d_trans_x_hat * cos_t - d_trans_y_hat * sin_t
+        y_nuevo = y + d_trans_x_hat * sin_t + d_trans_y_hat * cos_t
+        theta_nuevo = theta + d_rot_hat
+        theta_nuevo = np.arctan2(np.sin(theta_nuevo), np.cos(theta_nuevo))
+
+        # 5. Mismo peso que antes.
+        return np.stack([x_nuevo, y_nuevo, theta_nuevo, particulas[:, 3]], axis=1)
 
     def pesar_particulas(self, particulas, puntos_scan):
         """
@@ -370,7 +399,45 @@ class Localizador(Node):
           6. Normalizar: pesos /= pesos.sum() (si la suma da 0, devolvé
              pesos uniformes 1/N en su lugar, para no dividir por cero).
         """
-        pass
+        n = len(particulas)
+
+        # 1. Puntos del scan en map, según cada partícula: matrices (N, M).
+        x = particulas[:, 0][:, None]
+        y = particulas[:, 1][:, None]
+        cos_t = np.cos(particulas[:, 2])[:, None]
+        sin_t = np.sin(particulas[:, 2])[:, None]
+        px = puntos_scan[:, 0][None, :]
+        py = puntos_scan[:, 1][None, :]
+        xs_mapa = x + cos_t * px - sin_t * py
+        ys_mapa = y + sin_t * px + cos_t * py
+
+        # 2. Metros → índices de la grilla (columna = x, fila = y).
+        resolucion = self.info_mapa.resolution
+        origen_x = self.info_mapa.origin.position.x
+        origen_y = self.info_mapa.origin.position.y
+        columnas = np.floor((xs_mapa - origen_x) / resolucion).astype(int)
+        filas = np.floor((ys_mapa - origen_y) / resolucion).astype(int)
+
+        # 3. Los puntos que caen fuera del mapa quedan con probabilidad mínima.
+        alto, ancho = self.campo.shape
+        dentro = (filas >= 0) & (filas < alto) & (columnas >= 0) & (columnas < ancho)
+        probabilidades = np.ones_like(xs_mapa)
+
+        # 4. Leer el campo en los índices válidos. El mínimo de 1.0 evita
+        # log(0) en las celdas lejos de toda pared.
+        probabilidades[dentro] = self.campo[filas[dentro], columnas[dentro]]
+        probabilidades = np.maximum(probabilidades, 1.0)
+
+        # 5. Sumar logaritmos y restar el máximo antes de exponenciar.
+        log_pesos = np.sum(np.log(probabilidades), axis=1)
+        log_pesos -= log_pesos.max()
+        pesos = np.exp(log_pesos)
+
+        # 6. Normalizar.
+        suma = pesos.sum()
+        if suma <= 0.0 or not np.isfinite(suma):
+            return np.full(n, 1.0 / n)
+        return pesos / suma
 
     def remuestrear(self, particulas, pesos):
         """
@@ -393,7 +460,23 @@ class Localizador(Node):
              de todas a 1/N (ya cumplieron su función al elegir a quién
              copiar).
         """
-        pass
+        n = len(particulas)
+
+        # 1-2. Un solo offset aleatorio y N pasos equiespaciados.
+        offset = np.random.uniform()
+        pasos = (np.arange(n) + offset) / n
+
+        # 3. Suma acumulada, con el último valor forzado a 1.0.
+        acumulada = np.cumsum(pesos)
+        acumulada[-1] = 1.0
+
+        # 4. En qué partícula cae cada paso.
+        indices = np.searchsorted(acumulada, pasos)
+
+        # 5. Copia nueva, con pesos uniformes.
+        nuevas = particulas[indices].copy()
+        nuevas[:, 3] = 1.0 / n
+        return nuevas
 
 
 def main(args=None):

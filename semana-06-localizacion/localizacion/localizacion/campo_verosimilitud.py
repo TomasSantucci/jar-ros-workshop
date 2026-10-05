@@ -80,7 +80,11 @@ class CampoVerosimilitud(Node):
              obstáculos mismos (distancia 0) y decae a medida que te alejás.
           5. Escalar a 0-100 (multiplicar por 100) y devolver.
         """
-        pass
+        mascara = grid >= UMBRAL_OCUPADO
+        distancia_px = ndimage.distance_transform_edt(~mascara)
+        distancia_m = distancia_px * resolucion
+        probabilidad = np.exp(-distancia_m ** 2 / (2 * self.sigma_sensor ** 2))
+        return np.round(probabilidad * 100)
 
 
 def main(args=None):
